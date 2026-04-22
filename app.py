@@ -4,6 +4,7 @@ import numpy as np
 import joblib
 import matplotlib.pyplot as plt
 import pycountry
+from sklearn.impute import SimpleImputer
 
 # =========================
 # PAGE CONFIG
@@ -80,9 +81,7 @@ except:
 # =========================
 if uploaded_file:
 
-    # =========================
     # LOAD DATA
-    # =========================
     if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
     else:
@@ -132,14 +131,16 @@ if uploaded_file:
             df_clean[col] = pd.to_numeric(temp, errors='coerce')
 
     # =========================
+    # 🔥 IMPUTATION (NO NaN)
+    # =========================
+    imputer = SimpleImputer(strategy="mean")
+    df_clean[:] = imputer.fit_transform(df_clean)
+
+    # =========================
     # TRANSFORM
     # =========================
-    from sklearn.impute import SimpleImputer
-    imputer = SimpleImputer(strategy="mean")
-
     X_scaled = scaler.transform(df_clean)
-    X_imputed = imputer.fit_transform(X_scaled)
-    X_pca = pca.transform(X_imputed)
+    X_pca = pca.transform(X_scaled)
 
     clusters = model.predict(X_pca)
     df["Cluster"] = clusters
@@ -169,30 +170,17 @@ if uploaded_file:
     # =========================
     if menu == "Overview & EDA":
 
-        st.markdown("## 📊 Overview & EDA")
-
         col1, col2, col3 = st.columns(3)
         col1.metric("🌍 Countries", len(df_filtered))
         col2.metric("📊 Features", df_clean_filtered.shape[1])
         col3.metric("🧠 Clusters", len(set(clusters_filtered)))
 
-        st.markdown("### 🔍 Dataset Preview")
         st.dataframe(df_filtered.head())
-
-        st.markdown("### ⚠️ Missing Values")
         st.bar_chart(df_clean_filtered.isnull().sum())
 
-        st.markdown("### 🔥 Correlation Heatmap")
         corr = df_clean_filtered.corr()
-
         fig, ax = plt.subplots(figsize=(8,6))
         im = ax.imshow(corr)
-
-        ax.set_xticks(range(len(corr.columns)))
-        ax.set_yticks(range(len(corr.columns)))
-        ax.set_xticklabels(corr.columns, rotation=90)
-        ax.set_yticklabels(corr.columns)
-
         plt.colorbar(im)
         st.pyplot(fig)
 
@@ -200,8 +188,6 @@ if uploaded_file:
     # 2. FEATURE ANALYSIS
     # =========================
     elif menu == "Feature Analysis":
-
-        st.markdown("## 🔬 Feature Analysis")
 
         feature = st.selectbox("Select Feature", df_clean_filtered.columns)
 
@@ -211,29 +197,13 @@ if uploaded_file:
         col3.metric("Min", round(df_clean_filtered[feature].min(), 2))
 
         fig, ax = plt.subplots()
-        ax.hist(df_clean_filtered[feature].dropna(), bins=30)
+        ax.hist(df_clean_filtered[feature], bins=30)
         st.pyplot(fig)
-
-        fig, ax = plt.subplots()
-        ax.boxplot(df_clean_filtered[feature].dropna())
-        st.pyplot(fig)
-
-        top = df_filtered.sort_values(by=feature, ascending=False)[["Country", feature]].head(5)
-        bottom = df_filtered.sort_values(by=feature, ascending=True)[["Country", feature]].head(5)
-
-        col1, col2 = st.columns(2)
-        col1.write("Top 5")
-        col1.dataframe(top)
-
-        col2.write("Bottom 5")
-        col2.dataframe(bottom)
 
     # =========================
     # 3. CLUSTERING MODELS
     # =========================
     elif menu == "Clustering Models":
-
-        st.markdown("## 🤖 Clustering Models")
 
         st.bar_chart(pd.Series(clusters_filtered).value_counts())
 
@@ -241,79 +211,31 @@ if uploaded_file:
         ax.scatter(X_pca[:, 0], X_pca[:, 1], c=clusters)
         st.pyplot(fig)
 
-        st.dataframe(df_filtered.head(20))
+        st.dataframe(df_filtered.head())
 
     # =========================
     # 4. MODEL COMPARISON
     # =========================
     elif menu == "Model Comparison":
 
-        st.markdown("## 📊 Model Comparison")
-
-        cluster_counts = pd.Series(clusters_filtered).value_counts()
-        st.dataframe(cluster_counts.reset_index().rename(
-            columns={"index": "Cluster", 0: "Count"}
-        ))
-
         cluster_data = df_clean_filtered.copy()
         cluster_data["Cluster"] = clusters_filtered
 
-        cluster_means = cluster_data.groupby("Cluster").mean()
-        st.dataframe(cluster_means)
-
-        feature = st.selectbox("Select Feature", df_clean_filtered.columns)
-
-        fig, ax = plt.subplots()
-        cluster_means[feature].plot(kind='bar', ax=ax)
-        st.pyplot(fig)
+        st.dataframe(cluster_data.groupby("Cluster").mean())
 
     # =========================
     # 5. COUNTRY EXPLORER
     # =========================
     elif menu == "Country Explorer":
 
-        st.markdown("## 🌍 Country Explorer")
-
         if selected_country == "All Countries":
-            st.warning("Please select a country from sidebar")
+            st.warning("Please select a country")
         else:
             row = df_filtered.iloc[0]
             row_clean = df_clean_filtered.iloc[0]
 
-            st.markdown(f"""
-            <div class="card">
-                <h3>{get_flag(selected_country)} {selected_country}</h3>
-                <p>Cluster: <b>{int(row['Cluster'])}</b></p>
-            </div>
-            """, unsafe_allow_html=True)
-
-            cols = st.columns(4)
-
-            for i, col_name in enumerate(df_clean_filtered.columns[:8]):
-                with cols[i % 4]:
-                    st.markdown(f"""
-                    <div class="card">
-                        <p>{col_name}</p>
-                        <div class="metric">{round(row_clean[col_name], 2)}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-            cluster_id = row["Cluster"]
-
-            cluster_data = df_clean.copy()
-            cluster_data["Cluster"] = clusters
-
-            cluster_mean = cluster_data[cluster_data["Cluster"] == cluster_id].mean()
-
-            features = df_clean.columns[:5]
-
-            fig, ax = plt.subplots()
-            ax.bar(features, row_clean[features], label="Country")
-            ax.bar(features, cluster_mean[features], alpha=0.5, label="Cluster Mean")
-            plt.xticks(rotation=45)
-            plt.legend()
-
-            st.pyplot(fig)
+            st.markdown(f"### {get_flag(selected_country)} {selected_country}")
+            st.write(row_clean)
 
 else:
     st.info("⬅️ Upload dataset to begin")
