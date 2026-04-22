@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import joblib
 import matplotlib.pyplot as plt
+import pycountry
 
 # =========================
 # PAGE CONFIG
@@ -29,6 +30,17 @@ body {background-color: #0f172a; color: white;}
 }
 </style>
 """, unsafe_allow_html=True)
+
+# =========================
+# FLAG FUNCTION
+# =========================
+def get_flag(country_name):
+    try:
+        country = pycountry.countries.search_fuzzy(country_name)[0]
+        code = country.alpha_2
+        return "".join(chr(127397 + ord(c)) for c in code)
+    except:
+        return ""
 
 # =========================
 # SIDEBAR
@@ -68,7 +80,9 @@ except:
 # =========================
 if uploaded_file:
 
-    # Read file
+    # =========================
+    # LOAD DATA
+    # =========================
     if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
     else:
@@ -79,6 +93,19 @@ if uploaded_file:
         st.stop()
 
     country_names = df["Country"]
+
+    # =========================
+    # GLOBAL COUNTRY FILTER
+    # =========================
+    st.sidebar.markdown("### 🌐 Select Country")
+
+    country_list = sorted(country_names.unique())
+
+    selected_country = st.sidebar.selectbox(
+        "Choose Country",
+        ["All Countries"] + country_list,
+        format_func=lambda x: f"{get_flag(x)} {x}" if x != "All Countries" else x
+    )
 
     # =========================
     # CLEAN DATA
@@ -118,6 +145,26 @@ if uploaded_file:
     df["Cluster"] = clusters
 
     # =========================
+    # FILTER DATA
+    # =========================
+    if selected_country != "All Countries":
+        df_filtered = df[df["Country"] == selected_country]
+        df_clean_filtered = df_clean.loc[df_filtered.index]
+        clusters_filtered = df_filtered["Cluster"]
+    else:
+        df_filtered = df
+        df_clean_filtered = df_clean
+        clusters_filtered = clusters
+
+    # =========================
+    # HEADER
+    # =========================
+    if selected_country != "All Countries":
+        st.markdown(f"## {get_flag(selected_country)} {selected_country}")
+    else:
+        st.markdown("## 🌍 All Countries Overview")
+
+    # =========================
     # 1. OVERVIEW & EDA
     # =========================
     if menu == "Overview & EDA":
@@ -125,18 +172,18 @@ if uploaded_file:
         st.markdown("## 📊 Overview & EDA")
 
         col1, col2, col3 = st.columns(3)
-        col1.metric("🌍 Countries", len(df))
-        col2.metric("📊 Features", df_clean.shape[1])
-        col3.metric("🧠 Clusters", len(set(clusters)))
+        col1.metric("🌍 Countries", len(df_filtered))
+        col2.metric("📊 Features", df_clean_filtered.shape[1])
+        col3.metric("🧠 Clusters", len(set(clusters_filtered)))
 
         st.markdown("### 🔍 Dataset Preview")
-        st.dataframe(df.head())
+        st.dataframe(df_filtered.head())
 
         st.markdown("### ⚠️ Missing Values")
-        st.bar_chart(df_clean.isnull().sum())
+        st.bar_chart(df_clean_filtered.isnull().sum())
 
         st.markdown("### 🔥 Correlation Heatmap")
-        corr = df_clean.corr()
+        corr = df_clean_filtered.corr()
 
         fig, ax = plt.subplots(figsize=(8,6))
         im = ax.imshow(corr)
@@ -156,29 +203,23 @@ if uploaded_file:
 
         st.markdown("## 🔬 Feature Analysis")
 
-        feature = st.selectbox("Select Feature", df_clean.columns)
+        feature = st.selectbox("Select Feature", df_clean_filtered.columns)
 
         col1, col2, col3 = st.columns(3)
-        col1.metric("Mean", round(df_clean[feature].mean(), 2))
-        col2.metric("Max", round(df_clean[feature].max(), 2))
-        col3.metric("Min", round(df_clean[feature].min(), 2))
-
-        st.markdown("### 📊 Distribution")
+        col1.metric("Mean", round(df_clean_filtered[feature].mean(), 2))
+        col2.metric("Max", round(df_clean_filtered[feature].max(), 2))
+        col3.metric("Min", round(df_clean_filtered[feature].min(), 2))
 
         fig, ax = plt.subplots()
-        ax.hist(df_clean[feature].dropna(), bins=30)
+        ax.hist(df_clean_filtered[feature].dropna(), bins=30)
         st.pyplot(fig)
-
-        st.markdown("### 📦 Box Plot")
 
         fig, ax = plt.subplots()
-        ax.boxplot(df_clean[feature].dropna())
+        ax.boxplot(df_clean_filtered[feature].dropna())
         st.pyplot(fig)
 
-        st.markdown("### 🏆 Top / Bottom Countries")
-
-        top = df.sort_values(by=feature, ascending=False)[["Country", feature]].head(5)
-        bottom = df.sort_values(by=feature, ascending=True)[["Country", feature]].head(5)
+        top = df_filtered.sort_values(by=feature, ascending=False)[["Country", feature]].head(5)
+        bottom = df_filtered.sort_values(by=feature, ascending=True)[["Country", feature]].head(5)
 
         col1, col2 = st.columns(2)
         col1.write("Top 5")
@@ -194,20 +235,13 @@ if uploaded_file:
 
         st.markdown("## 🤖 Clustering Models")
 
-        st.markdown("### 📊 Cluster Distribution")
-        st.bar_chart(pd.Series(clusters).value_counts())
-
-        st.markdown("### 🌐 PCA Visualization")
+        st.bar_chart(pd.Series(clusters_filtered).value_counts())
 
         fig, ax = plt.subplots()
         ax.scatter(X_pca[:, 0], X_pca[:, 1], c=clusters)
-        ax.set_xlabel("PCA1")
-        ax.set_ylabel("PCA2")
-
         st.pyplot(fig)
 
-        st.markdown("### 📋 Data with Clusters")
-        st.dataframe(df.head(20))
+        st.dataframe(df_filtered.head(20))
 
     # =========================
     # 4. MODEL COMPARISON
@@ -216,20 +250,18 @@ if uploaded_file:
 
         st.markdown("## 📊 Model Comparison")
 
-        cluster_counts = pd.Series(clusters).value_counts()
+        cluster_counts = pd.Series(clusters_filtered).value_counts()
         st.dataframe(cluster_counts.reset_index().rename(
             columns={"index": "Cluster", 0: "Count"}
         ))
 
-        cluster_data = df_clean.copy()
-        cluster_data["Cluster"] = clusters
+        cluster_data = df_clean_filtered.copy()
+        cluster_data["Cluster"] = clusters_filtered
 
         cluster_means = cluster_data.groupby("Cluster").mean()
-
-        st.markdown("### 📊 Cluster Means")
         st.dataframe(cluster_means)
 
-        feature = st.selectbox("Select Feature", df_clean.columns)
+        feature = st.selectbox("Select Feature", df_clean_filtered.columns)
 
         fig, ax = plt.subplots()
         cluster_means[feature].plot(kind='bar', ax=ax)
@@ -242,47 +274,46 @@ if uploaded_file:
 
         st.markdown("## 🌍 Country Explorer")
 
-        selected_country = st.selectbox("Select Country", country_names)
+        if selected_country == "All Countries":
+            st.warning("Please select a country from sidebar")
+        else:
+            row = df_filtered.iloc[0]
+            row_clean = df_clean_filtered.iloc[0]
 
-        row_index = df[df["Country"] == selected_country].index[0]
-        row_clean = df_clean.iloc[row_index]
+            st.markdown(f"""
+            <div class="card">
+                <h3>{get_flag(selected_country)} {selected_country}</h3>
+                <p>Cluster: <b>{int(row['Cluster'])}</b></p>
+            </div>
+            """, unsafe_allow_html=True)
 
-        st.markdown(f"""
-        <div class="card">
-            <h3>{selected_country}</h3>
-            <p>Cluster: <b>{int(df.loc[row_index, 'Cluster'])}</b></p>
-        </div>
-        """, unsafe_allow_html=True)
+            cols = st.columns(4)
 
-        cols = st.columns(4)
+            for i, col_name in enumerate(df_clean_filtered.columns[:8]):
+                with cols[i % 4]:
+                    st.markdown(f"""
+                    <div class="card">
+                        <p>{col_name}</p>
+                        <div class="metric">{round(row_clean[col_name], 2)}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-        for i, col_name in enumerate(df_clean.columns[:8]):
-            with cols[i % 4]:
-                st.markdown(f"""
-                <div class="card">
-                    <p>{col_name}</p>
-                    <div class="metric">{round(row_clean[col_name], 2)}</div>
-                </div>
-                """, unsafe_allow_html=True)
+            cluster_id = row["Cluster"]
 
-        st.markdown("### 📉 Country vs Cluster Mean")
+            cluster_data = df_clean.copy()
+            cluster_data["Cluster"] = clusters
 
-        cluster_id = df.loc[row_index, "Cluster"]
+            cluster_mean = cluster_data[cluster_data["Cluster"] == cluster_id].mean()
 
-        cluster_data = df_clean.copy()
-        cluster_data["Cluster"] = clusters
+            features = df_clean.columns[:5]
 
-        cluster_mean = cluster_data[cluster_data["Cluster"] == cluster_id].mean()
+            fig, ax = plt.subplots()
+            ax.bar(features, row_clean[features], label="Country")
+            ax.bar(features, cluster_mean[features], alpha=0.5, label="Cluster Mean")
+            plt.xticks(rotation=45)
+            plt.legend()
 
-        features = df_clean.columns[:5]
-
-        fig, ax = plt.subplots()
-        ax.bar(features, row_clean[features], label="Country")
-        ax.bar(features, cluster_mean[features], alpha=0.5, label="Cluster Mean")
-        plt.xticks(rotation=45)
-        plt.legend()
-
-        st.pyplot(fig)
+            st.pyplot(fig)
 
 else:
     st.info("⬅️ Upload dataset to begin")
