@@ -9,7 +9,7 @@ from sklearn.impute import SimpleImputer
 # =========================
 # PAGE CONFIG
 # =========================
-st.set_page_config(page_title="Global Dev Clustering", layout="wide")
+st.set_page_config(page_title="Global Dev Dashboard", layout="wide")
 
 # =========================
 # FLAG FUNCTION
@@ -51,14 +51,19 @@ def load_models():
 scaler, pca, model, columns = load_models()
 
 # =========================
-# MAIN
+# MAIN APP
 # =========================
 if uploaded_file:
 
+    # LOAD DATA
     df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
 
+    if "Country" not in df.columns:
+        st.error("Dataset must contain 'Country'")
+        st.stop()
+
     # =========================
-    # FIX MULTIPLE ROWS
+    # FIX MULTIPLE ROWS (LATEST YEAR)
     # =========================
     if "Year" in df.columns:
         df = df.sort_values("Year").drop_duplicates("Country", keep="last")
@@ -79,21 +84,33 @@ if uploaded_file:
     # =========================
     df_clean = df.drop("Country", axis=1).copy()
 
+    # Ensure all model columns exist
     for col in columns:
         if col not in df_clean.columns:
             df_clean[col] = np.nan
 
     df_clean = df_clean[columns]
 
+    # Convert everything to numeric
     for col in df_clean.columns:
         df_clean[col] = pd.to_numeric(
-            df_clean[col].astype(str).str.replace(',', '').str.replace('$', ''),
+            df_clean[col].astype(str)
+            .str.replace(',', '')
+            .str.replace('$', '')
+            .str.replace('%', ''),
             errors='coerce'
         )
 
-    # IMPUTE
+    # =========================
+    # IMPUTATION (FIXED)
+    # =========================
     imputer = SimpleImputer(strategy="mean")
-    df_clean[:] = imputer.fit_transform(df_clean)
+
+    df_clean = pd.DataFrame(
+        imputer.fit_transform(df_clean),
+        columns=df_clean.columns,
+        index=df_clean.index
+    )
 
     # =========================
     # MODEL
@@ -105,14 +122,35 @@ if uploaded_file:
     df["Cluster"] = clusters
 
     # =========================
-    # FILTER
+    # CLUSTER LABELS (GDP BASED)
+    # =========================
+    cluster_data = df_clean.copy()
+    cluster_data["Cluster"] = clusters
+
+    if "GDP" in cluster_data.columns:
+        cluster_means = cluster_data.groupby("Cluster")["GDP"].mean().sort_values()
+    else:
+        cluster_means = cluster_data.groupby("Cluster").mean().mean(axis=1).sort_values()
+
+    labels = ["Low Income", "Middle Income", "High Income"]
+    cluster_labels = {}
+
+    for i, cluster_id in enumerate(cluster_means.index):
+        cluster_labels[cluster_id] = labels[i] if i < len(labels) else f"Cluster {cluster_id}"
+
+    df["Cluster Name"] = df["Cluster"].map(cluster_labels)
+
+    # =========================
+    # FILTER DATA
     # =========================
     if selected_country != "All Countries":
         df_filtered = df[df["Country"] == selected_country]
         df_clean_filtered = df_clean.loc[df_filtered.index]
+        clusters_filtered = df_filtered["Cluster"]
     else:
         df_filtered = df
         df_clean_filtered = df_clean
+        clusters_filtered = clusters
 
     # =========================
     # LAYOUT (LEFT + RIGHT)
@@ -120,43 +158,57 @@ if uploaded_file:
     left, right = st.columns([1, 3])
 
     # =========================
-    # LEFT SIDE (POPULATION)
+    # LEFT PANEL (POPULATION)
     # =========================
     with left:
         st.markdown("## 👥 Population")
 
-        if "Population" in df.columns:
+        if "Population" in df.columns and selected_country != "All Countries":
 
-            if selected_country != "All Countries":
-                pop_val = df_filtered["Population"].iloc[0]
-                st.metric("Population", f"{int(pop_val):,}")
+            pop_val = df_filtered["Population"].iloc[0]
+            st.metric("Population", f"{int(pop_val):,}")
 
-            # Graph
+            # Trend (if Year exists)
             if "Year" in df.columns:
-                pop_trend = df[df["Country"] == selected_country][["Year", "Population"]]
+                trend = df[df["Country"] == selected_country][["Year", "Population"]]
 
-                fig, ax = plt.subplots()
-                ax.plot(pop_trend["Year"], pop_trend["Population"])
-                ax.set_title("Population Trend")
-                st.pyplot(fig)
+                if len(trend) > 1:
+                    fig, ax = plt.subplots()
+                    ax.plot(trend["Year"], trend["Population"])
+                    ax.set_title("Population Trend")
+                    st.pyplot(fig)
 
         else:
-            st.warning("Population column not found")
+            st.info("Select a country")
 
     # =========================
-    # RIGHT SIDE (MAIN CONTENT)
+    # RIGHT PANEL (MAIN)
     # =========================
     with right:
 
         st.markdown(f"## {selected_country}")
 
+        # =========================
+        # OVERVIEW
+        # =========================
         if menu == "Overview & EDA":
 
-            st.metric("Countries", df_filtered["Country"].nunique())
-            st.metric("Features", df_clean_filtered.shape[1])
+            col1, col2, col3 = st.columns(3)
+
+            if selected_country != "All Countries":
+                col1.metric("Country", selected_country)
+                col3.metric("Cluster", df_filtered["Cluster Name"].iloc[0])
+            else:
+                col1.metric("Countries", df["Country"].nunique())
+                col3.metric("Clusters", df["Cluster"].nunique())
+
+            col2.metric("Features", df_clean_filtered.shape[1])
 
             st.dataframe(df_filtered.head())
 
+        # =========================
+        # FEATURE ANALYSIS
+        # =========================
         elif menu == "Feature Analysis":
 
             feature = st.selectbox("Feature", df_clean_filtered.columns)
@@ -167,19 +219,36 @@ if uploaded_file:
             ax.hist(df_clean_filtered[feature], bins=30)
             st.pyplot(fig)
 
+        # =========================
+        # CLUSTERING
+        # =========================
         elif menu == "Clustering Models":
 
-            st.bar_chart(pd.Series(clusters).value_counts())
+            st.bar_chart(pd.Series(clusters_filtered).value_counts())
 
+            fig, ax = plt.subplots()
+            ax.scatter(X_pca[:, 0], X_pca[:, 1], c=clusters)
+            st.pyplot(fig)
+
+        # =========================
+        # MODEL COMPARISON
+        # =========================
         elif menu == "Model Comparison":
 
-            df_clean_filtered["Cluster"] = df_filtered["Cluster"]
-            st.dataframe(df_clean_filtered.groupby("Cluster").mean())
+            temp = df_clean_filtered.copy()
+            temp["Cluster"] = clusters_filtered
 
+            st.dataframe(temp.groupby("Cluster").mean())
+
+        # =========================
+        # COUNTRY EXPLORER
+        # =========================
         elif menu == "Country Explorer":
 
             if selected_country != "All Countries":
                 st.write(df_clean_filtered.iloc[0])
+            else:
+                st.warning("Select a country")
 
 else:
-    st.info("Upload dataset")
+    st.info("⬅️ Upload dataset to begin")
