@@ -1,154 +1,194 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import joblib
+import matplotlib.pyplot as plt
 
-# --- Load models ---
-try:
+# =========================
+# PAGE CONFIG
+# =========================
+st.set_page_config(page_title="Global Dev Clustering", layout="wide")
+
+# =========================
+# CUSTOM DARK UI
+# =========================
+st.markdown("""
+<style>
+.main {
+    background-color: #0f172a;
+    color: white;
+}
+.block-container {
+    padding: 2rem;
+}
+.card {
+    background-color: #1e293b;
+    padding: 18px;
+    border-radius: 12px;
+    margin-bottom: 12px;
+}
+.metric {
+    font-size: 20px;
+    font-weight: bold;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# =========================
+# SIDEBAR
+# =========================
+st.sidebar.title("🌍 Global Dev Clustering")
+st.sidebar.write("Unsupervised ML Project")
+
+uploaded_file = st.sidebar.file_uploader("Upload dataset", type=["csv", "xlsx"])
+
+# =========================
+# LOAD MODELS
+# =========================
+@st.cache_resource
+def load_models():
     scaler = joblib.load("scaler.joblib")
     pca = joblib.load("pca.joblib")
-    kmeans_model = joblib.load("kmeans.joblib")
-    columns = joblib.load("columns.joblib")  # correct training columns
-except FileNotFoundError:
-    st.error("Missing model files. Ensure all .joblib files are uploaded.")
+    kmeans = joblib.load("kmeans.joblib")
+    columns = joblib.load("columns.joblib")
+    return scaler, pca, kmeans, columns
+
+try:
+    scaler, pca, model, columns = load_models()
+except:
+    st.error("❌ Missing model files (.joblib)")
     st.stop()
 
-st.title("Global Development Clustering App")
-st.write("Upload dataset to classify countries into clusters")
+# =========================
+# MAIN APP
+# =========================
+if uploaded_file:
 
-uploaded_file = st.file_uploader("Upload CSV or XLSX file", type=["csv", "xlsx"])
+    # =========================
+    # READ FILE
+    # =========================
+    if uploaded_file.name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
 
-if uploaded_file is not None:
-
-    # --- Read file ---
-    try:
-        if uploaded_file.name.endswith(".csv"):
-            df_uploaded = pd.read_csv(uploaded_file)
-        else:
-            df_uploaded = pd.read_excel(uploaded_file, engine="openpyxl")
-    except Exception as e:
-        st.error(f"File reading error: {e}")
+    if "Country" not in df.columns:
+        st.error("Dataset must contain 'Country' column")
         st.stop()
 
-    st.write("### Original Data")
-    st.dataframe(df_uploaded.head())
+    country_names = df["Country"]
 
-    # --- Save Country column ---
-    country_names = df_uploaded['Country'].copy() if 'Country' in df_uploaded.columns else None
+    # =========================
+    # CLEAN DATA (NUMERIC SAFE)
+    # =========================
+    df_clean = df.drop("Country", axis=1).copy()
 
-    # --- Drop non-feature column ---
-    df_processed = df_uploaded.drop('Country', axis=1, errors='ignore').copy()
+    # Align columns
+    for col in columns:
+        if col not in df_clean.columns:
+            df_clean[col] = np.nan
 
-    # =========================================================
-    # STEP 1: ALIGN COLUMNS FIRST (VERY IMPORTANT)
-    # =========================================================
-    original_feature_cols = columns
+    df_clean = df_clean[columns]
 
-    # Add missing columns
-    for col in original_feature_cols:
-        if col not in df_processed.columns:
-            df_processed[col] = np.nan
-
-    # Remove extra columns & reorder
-    df_processed = df_processed[original_feature_cols]
-
-    # =========================================================
-    #  STEP 2: CLEAN DATA (AFTER ALIGNMENT)
-    # =========================================================
-    for col in df_processed.columns:
-        temp = df_processed[col].astype(str)\
+    # Convert to numeric
+    for col in df_clean.columns:
+        temp = df_clean[col].astype(str)\
             .str.replace('$', '', regex=False)\
             .str.replace(',', '', regex=False)\
             .str.strip()
 
         if temp.str.contains('%').any():
-            df_processed[col] = pd.to_numeric(
+            df_clean[col] = pd.to_numeric(
                 temp.str.replace('%', '', regex=False),
                 errors='coerce'
             ) / 100
         else:
-            df_processed[col] = pd.to_numeric(temp, errors='coerce')
+            df_clean[col] = pd.to_numeric(temp, errors='coerce')
 
-    # =========================================================
-    # DEBUG (OPTIONAL - REMOVE LATER)
-    # =========================================================
-    st.write("Expected features:", len(original_feature_cols))
-    st.write("Input shape:", df_processed.shape)
-
-    # =========================================================
-    # STEP 3: SCALING
-    # =========================================================
-    try:
-        X_scaled = scaler.transform(df_processed)
-    except Exception as e:
-        st.error(f"Scaling error: {e}")
-        st.stop()
-
-    # =========================================================
-    # STEP 4: HANDLE MISSING VALUES (SAFE)
-    # =========================================================
-    # NOTE: Ideally load saved imputer
+    # =========================
+    # TRANSFORM PIPELINE
+    # =========================
     from sklearn.impute import SimpleImputer
-    imputer = SimpleImputer(strategy='mean')
+    imputer = SimpleImputer(strategy="mean")
+
+    X_scaled = scaler.transform(df_clean)
     X_imputed = imputer.fit_transform(X_scaled)
+    X_pca = pca.transform(X_imputed)
 
-    # =========================================================
-    # STEP 5: PCA TRANSFORMATION
-    # =========================================================
-    try:
-        X_pca = pca.transform(X_imputed)
-    except Exception as e:
-        st.error(f"PCA error: {e}")
-        st.stop()
+    clusters = model.predict(X_pca)
 
-    # =========================================================
-    # STEP 6: PREDICTION
-    # =========================================================
-    try:
-        clusters = kmeans_model.predict(X_pca)
-    except Exception as e:
-        st.error(f"Prediction error: {e}")
-        st.stop()
+    # Add cluster to df (for display)
+    df["Cluster"] = clusters
 
-    # --- Cluster mapping ---
-    cluster_names = {
-        0: "Developed",
-        1: "Developing",
-        2: "Underdeveloped"
-    }
+    # =========================
+    # COUNTRY SELECTOR
+    # =========================
+    st.markdown("## 📊 Per-Country Detail Card")
 
-    df_uploaded['Cluster'] = clusters
-    df_uploaded['Cluster_Name'] = df_uploaded['Cluster'].map(cluster_names)
+    selected_country = st.selectbox(
+        "Select country to inspect:",
+        country_names
+    )
 
-    if country_names is not None:
-        df_uploaded['Country'] = country_names
+    # Get row index safely
+    row_index = df[df["Country"] == selected_country].index[0]
 
-    # =========================================================
-    # RESULTS
-    # =========================================================
-    st.write("### Cluster Results")
+    # Clean numeric row
+    row_clean = df_clean.iloc[row_index]
 
-    if 'Country' in df_uploaded.columns:
-        st.dataframe(df_uploaded[['Country', 'Cluster_Name']])
-    else:
-        st.dataframe(df_uploaded[['Cluster_Name']])
+    # =========================
+    # HEADER CARD
+    # =========================
+    st.markdown(f"""
+    <div class="card">
+        <h3>🌐 {selected_country}</h3>
+        <p>Cluster assigned: <b>{int(df.loc[row_index, 'Cluster'])}</b></p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # =========================================================
-    # VISUALIZATION
-    # =========================================================
-    st.write("### Cluster Visualization")
+    # =========================
+    # METRICS GRID
+    # =========================
+    st.markdown("### Key Indicators")
+
+    cols = st.columns(4)
+
+    for i, col_name in enumerate(df_clean.columns[:8]):
+        with cols[i % 4]:
+            st.markdown(f"""
+            <div class="card">
+                <p>{col_name}</p>
+                <div class="metric">{round(row_clean[col_name], 2)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # =========================
+    # CLUSTER MEAN COMPARISON (FIXED)
+    # =========================
+    st.markdown("## 📉 Country vs Cluster Mean")
+
+    cluster_id = df.loc[row_index, "Cluster"]
+
+    # Use CLEAN DATA (IMPORTANT FIX)
+    cluster_data = df_clean.copy()
+    cluster_data["Cluster"] = clusters
+
+    cluster_mean = cluster_data[cluster_data["Cluster"] == cluster_id].mean()
+
+    # =========================
+    # PLOT
+    # =========================
+    features_to_plot = df_clean.columns[:5]
 
     fig, ax = plt.subplots()
-    scatter = ax.scatter(X_pca[:, 0], X_pca[:, 1], c=clusters)
 
-    ax.set_xlabel("PCA1")
-    ax.set_ylabel("PCA2")
-    ax.set_title("K-Means Clusters")
+    ax.bar(features_to_plot, row_clean[features_to_plot], label="Country")
+    ax.bar(features_to_plot, cluster_mean[features_to_plot], alpha=0.5, label="Cluster Mean")
 
-    handles, _ = scatter.legend_elements()
-    unique_clusters = sorted(np.unique(clusters))
-    labels = [cluster_names.get(c, f"Cluster {c}") for c in unique_clusters]
-    ax.legend(handles, labels, title="Clusters")
+    plt.xticks(rotation=45)
+    plt.legend()
 
     st.pyplot(fig)
+
+else:
+    st.info("⬅️ Upload dataset to begin")
