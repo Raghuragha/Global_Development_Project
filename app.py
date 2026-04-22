@@ -94,7 +94,7 @@ if uploaded_file:
     country_names = df["Country"]
 
     # =========================
-    # GLOBAL COUNTRY FILTER
+    # COUNTRY FILTER
     # =========================
     st.sidebar.markdown("### 🌐 Select Country")
 
@@ -131,7 +131,7 @@ if uploaded_file:
             df_clean[col] = pd.to_numeric(temp, errors='coerce')
 
     # =========================
-    # 🔥 IMPUTATION (NO NaN)
+    # IMPUTATION (NO NaN)
     # =========================
     imputer = SimpleImputer(strategy="mean")
     df_clean[:] = imputer.fit_transform(df_clean)
@@ -144,6 +144,22 @@ if uploaded_file:
 
     clusters = model.predict(X_pca)
     df["Cluster"] = clusters
+
+    # =========================
+    # CLUSTER LABELS (AUTO)
+    # =========================
+    cluster_means = df.groupby("Cluster")["GDP"].mean().sort_values()
+
+    cluster_labels = {}
+    labels = ["Low Income", "Middle Income", "High Income"]
+
+    for i, cluster_id in enumerate(cluster_means.index):
+        if i < len(labels):
+            cluster_labels[cluster_id] = labels[i]
+        else:
+            cluster_labels[cluster_id] = f"Cluster {cluster_id}"
+
+    df["Cluster Name"] = df["Cluster"].map(cluster_labels)
 
     # =========================
     # FILTER DATA
@@ -166,14 +182,20 @@ if uploaded_file:
         st.markdown("## 🌍 All Countries Overview")
 
     # =========================
-    # 1. OVERVIEW & EDA
+    # OVERVIEW
     # =========================
     if menu == "Overview & EDA":
 
         col1, col2, col3 = st.columns(3)
-        col1.metric("🌍 Countries", len(df_filtered))
+
+        if selected_country != "All Countries":
+            col1.metric("🌍 Country", selected_country)
+            col3.metric("🧠 Cluster", df_filtered["Cluster Name"].iloc[0])
+        else:
+            col1.metric("🌍 Countries", df_filtered["Country"].nunique())
+            col3.metric("🧠 Total Clusters", df["Cluster"].nunique())
+
         col2.metric("📊 Features", df_clean_filtered.shape[1])
-        col3.metric("🧠 Clusters", len(set(clusters_filtered)))
 
         st.dataframe(df_filtered.head())
         st.bar_chart(df_clean_filtered.isnull().sum())
@@ -185,7 +207,7 @@ if uploaded_file:
         st.pyplot(fig)
 
     # =========================
-    # 2. FEATURE ANALYSIS
+    # FEATURE ANALYSIS
     # =========================
     elif menu == "Feature Analysis":
 
@@ -201,7 +223,7 @@ if uploaded_file:
         st.pyplot(fig)
 
     # =========================
-    # 3. CLUSTERING MODELS
+    # CLUSTERING
     # =========================
     elif menu == "Clustering Models":
 
@@ -214,7 +236,7 @@ if uploaded_file:
         st.dataframe(df_filtered.head())
 
     # =========================
-    # 4. MODEL COMPARISON
+    # MODEL COMPARISON
     # =========================
     elif menu == "Model Comparison":
 
@@ -224,7 +246,7 @@ if uploaded_file:
         st.dataframe(cluster_data.groupby("Cluster").mean())
 
     # =========================
-    # 5. COUNTRY EXPLORER
+    # COUNTRY EXPLORER
     # =========================
     elif menu == "Country Explorer":
 
