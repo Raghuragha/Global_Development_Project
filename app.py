@@ -146,9 +146,15 @@ if uploaded_file:
     df["Cluster"] = clusters
 
     # =========================
-    # CLUSTER LABELS (AUTO)
+    # 🔥 CLUSTER LABELS (FIXED)
     # =========================
-    cluster_means = df.groupby("Cluster")["GDP"].mean().sort_values()
+    cluster_data = df_clean.copy()
+    cluster_data["Cluster"] = clusters
+
+    # Ensure GDP is numeric
+    cluster_data["GDP"] = pd.to_numeric(cluster_data["GDP"], errors="coerce")
+
+    cluster_means = cluster_data.groupby("Cluster")["GDP"].mean().sort_values()
 
     cluster_labels = {}
     labels = ["Low Income", "Middle Income", "High Income"]
